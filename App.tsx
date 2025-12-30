@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AreaChart, Area, Tooltip, ResponsiveContainer } from "recharts";
 
 import { MOCK_WALLETS, MOCK_PROJECTS, MOCK_TRANSACTIONS } from "./services/mockData";
-import { parseTransferCommand } from "./services/geminiService";
+
+// AI disabled for now (do not import geminiService)
+// import { parseTransferCommand } from "./services/geminiService";
 
 import { TransferFlow } from "./components/TransferFlow";
 import { WalletCard } from "./components/WalletCard";
@@ -19,6 +21,8 @@ import { CreateAccount } from "./components/CreateAccount";
 import { GasEstimator } from "./components/GasEstimator";
 import { ConnectWallet } from "./components/ConnectWallet";
 
+import { useQuotes } from "./hooks/useQuotes";
+
 import type { TransferIntent, SubscriptionTier, TokenType } from "./types";
 
 const chartData = [
@@ -33,8 +37,11 @@ const chartData = [
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [activeTab, setActiveTab] =
-    useState<"dashboard" | "trends" | "assets" | "projects" | "activity" | "settings" | "buysell" | "bridge">("dashboard");
+
+  const [activeTab, setActiveTab] = useState<
+    "dashboard" | "trends" | "assets" | "projects" | "activity" | "settings" | "buysell" | "bridge"
+  >("dashboard");
+
   const [isSidebarOpen, setSidebarOpen] = useState(true);
 
   const [showTransfer, setShowTransfer] = useState(false);
@@ -42,17 +49,36 @@ const App: React.FC = () => {
   const [userTier, setUserTier] = useState<SubscriptionTier>("Basic");
 
   const [transferIntent, setTransferIntent] = useState<TransferIntent | null>(null);
+
+  // Keep the input bar, but disable AI behavior for now
   const [aiCommand, setAiCommand] = useState("");
   const [isAiThinking, setIsAiThinking] = useState(false);
-  const [notification, setNotification] = useState<string | null>(null);
 
+  const [notification, setNotification] = useState<string | null>(null);
   const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
+
+  // Live crypto quotes (poll every 20s)
+  const { quotes } = useQuotes(["BTC", "ETH", "SOL", "USDC"], 20000);
+
+  // Inject live prices into wallet balances so every view updates without new props
+  const walletsWithLivePrices = useMemo(() => {
+    return MOCK_WALLETS.map((w) => ({
+      ...w,
+      balances: w.balances.map((b) => {
+        const live = quotes?.[b.token]?.priceUsd;
+        return {
+          ...b,
+          priceUsd: typeof live === "number" ? live : b.priceUsd
+        };
+      })
+    }));
+  }, [quotes]);
 
   if (!isAuthenticated) {
     return <CreateAccount onComplete={() => setIsAuthenticated(true)} />;
   }
 
-  const totalPortfolioValue = MOCK_WALLETS.reduce((acc, wallet) => {
+  const totalPortfolioValue = walletsWithLivePrices.reduce((acc, wallet) => {
     const walletValue = wallet.balances.reduce(
       (sum, b) => sum + b.amount * b.priceUsd,
       0
@@ -62,43 +88,24 @@ const App: React.FC = () => {
 
   const handleAiSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!aiCommand.trim()) return;
-
-    try {
-      setIsAiThinking(true);
-      const intent = await parseTransferCommand(aiCommand, MOCK_WALLETS, MOCK_PROJECTS);
-      setIsAiThinking(false);
-
-      if (intent) {
-        setTransferIntent(intent);
-        setShowTransfer(true);
-        setAiCommand("");
-      } else {
-        setNotification(
-          "Couldn't understand that command. Try 'Send 50 USDC from Main to Project A'"
-        );
-        setTimeout(() => setNotification(null), 3000);
-      }
-    } catch (err) {
-      console.error(err);
-      setIsAiThinking(false);
-      setNotification("There was an error interpreting your command.");
-      setTimeout(() => setNotification(null), 3000);
-    }
+    setIsAiThinking(false);
+    setNotification("AI is disabled for now. Live pricing is active.");
+    setTimeout(() => setNotification(null), 2500);
+    setAiCommand("");
   };
 
   const handleTransferComplete = () => {
     setShowTransfer(false);
     setTransferIntent(null);
     setNotification("Transaction Successful! Funds are on the move.");
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 3500);
   };
 
   const handleUpgrade = (tier: SubscriptionTier) => {
     setUserTier(tier);
     setShowSubscription(false);
     setNotification(`Welcome to ${tier}! Plan benefits active immediately.`);
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 3500);
   };
 
   const handleAssetSend = (token?: TokenType) => {
@@ -114,7 +121,7 @@ const App: React.FC = () => {
       case "assets":
         return (
           <AssetsView
-            wallets={MOCK_WALLETS}
+            wallets={walletsWithLivePrices}
             transactions={MOCK_TRANSACTIONS}
             onSend={handleAssetSend}
           />
@@ -124,19 +131,17 @@ const App: React.FC = () => {
         return (
           <div className="space-y-6">
             <div className="mb-6">
-              <h2 className="text-2xl font-bold text-white mb-2">
-                Fund Innovation
-              </h2>
+              <h2 className="text-2xl font-bold text-white mb-2">Fund Innovation</h2>
               <p className="text-slate-400">
                 Directly transfer capital to vetted projects with transparent gas fees.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {MOCK_PROJECTS.map(project => (
+              {MOCK_PROJECTS.map((project) => (
                 <ProjectCard
                   key={project.id}
                   project={project}
-                  onFund={p => {
+                  onFund={(p) => {
                     setTransferIntent({ toWalletId: p.id });
                     setShowTransfer(true);
                   }}
@@ -150,7 +155,7 @@ const App: React.FC = () => {
         return <ActivityLog transactions={MOCK_TRANSACTIONS} />;
 
       case "settings":
-        return <SettingsView wallets={MOCK_WALLETS} />;
+        return <SettingsView wallets={walletsWithLivePrices} />;
 
       case "buysell":
         return (
@@ -180,7 +185,7 @@ const App: React.FC = () => {
                       Total Portfolio Value
                     </h2>
                     <div className="text-4xl font-bold text-white tracking-tight">
-                      ${totalPortfolioValue.toLocaleString()}
+                      ${totalPortfolioValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="text-emerald-400 text-sm font-medium flex items-center">
@@ -194,16 +199,8 @@ const App: React.FC = () => {
                     <AreaChart data={chartData}>
                       <defs>
                         <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                          <stop
-                            offset="5%"
-                            stopColor="#6366f1"
-                            stopOpacity={0.3}
-                          />
-                          <stop
-                            offset="95%"
-                            stopColor="#6366f1"
-                            stopOpacity={0}
-                          />
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <Tooltip
@@ -227,9 +224,7 @@ const App: React.FC = () => {
 
               {/* Quick actions card */}
               <div className="bg-gradient-to-br from-slate-900 to-indigo-900/20 border border-slate-800 rounded-2xl p-6 flex flex-col justify-center">
-                <h3 className="text-lg font-bold text-white mb-4">
-                  Quick Actions
-                </h3>
+                <h3 className="text-lg font-bold text-white mb-4">Quick Actions</h3>
                 <div className="space-y-3">
                   <button
                     onClick={() => setShowTransfer(true)}
@@ -239,9 +234,7 @@ const App: React.FC = () => {
                       <span className="p-1 bg-white/10 rounded">💸</span>
                       <span>Transfer / Pay</span>
                     </div>
-                    <span className="group-hover:translate-x-1 transition-transform">
-                      →
-                    </span>
+                    <span className="group-hover:translate-x-1 transition-transform">→</span>
                   </button>
 
                   <button
@@ -256,7 +249,8 @@ const App: React.FC = () => {
 
                   <button
                     onClick={() => setActiveTab("bridge")}
-                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-medium transition-colors text-left px-4 flex justify-between items-center">
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl font-medium transition-colors text-left px-4 flex justify-between items-center"
+                  >
                     <div className="flex items-center gap-3">
                       <span className="p-1 bg-white/10 rounded">🌉</span>
                       <span>Bridge Assets</span>
@@ -277,17 +271,19 @@ const App: React.FC = () => {
                   Manage Preferences
                 </button>
               </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {MOCK_WALLETS.map(wallet => (
+                {walletsWithLivePrices.map((wallet) => (
                   <WalletCard
                     key={wallet.id}
-                    wallet={wallet}
+                    wallet={wallet as any}
                     onClick={() => {
                       setTransferIntent({ fromWalletId: wallet.id });
                       setShowTransfer(true);
                     }}
                   />
                 ))}
+
                 <button className="border-2 border-dashed border-slate-800 rounded-xl p-6 flex flex-col items-center justify-center text-slate-500 hover:border-slate-600 hover:text-slate-400 transition-all min-h-[200px]">
                   <span className="text-2xl mb-2">+</span>
                   <span>Link New Wallet</span>
@@ -325,7 +321,7 @@ const App: React.FC = () => {
             !isSidebarOpen ? "pt-20 lg:pt-8" : ""
           }`}
         >
-          {/* Header / AI command bar */}
+          {/* Header / AI bar (kept, but disabled) */}
           <div className="mb-8 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
             <div
               className={`flex items-center gap-4 transition-all ${
@@ -382,8 +378,8 @@ const App: React.FC = () => {
                   <input
                     type="text"
                     value={aiCommand}
-                    onChange={e => setAiCommand(e.target.value)}
-                    placeholder="Ask AI: 'Transfer .05 BTC from Savings to John'"
+                    onChange={(e) => setAiCommand(e.target.value)}
+                    placeholder="AI disabled for now — live pricing is active"
                     className="w-full bg-transparent border-none focus:ring-0 text-white placeholder-slate-500 h-10"
                   />
                 </div>
@@ -399,12 +395,7 @@ const App: React.FC = () => {
                 viewBox="0 0 24 24"
                 stroke="currentColor"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
               {notification}
             </div>
@@ -416,7 +407,7 @@ const App: React.FC = () => {
 
       {showTransfer && (
         <TransferFlow
-          wallets={MOCK_WALLETS}
+          wallets={walletsWithLivePrices as any}
           projects={MOCK_PROJECTS}
           initialIntent={transferIntent}
           onClose={() => setShowTransfer(false)}
